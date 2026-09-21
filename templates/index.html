@@ -1,0 +1,329 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="color-scheme" content="dark" />
+    <title>sys32.ai</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap"
+      rel="stylesheet"
+    />
+    <link rel="stylesheet" href="/static/app.css?v=stage6c-1" />
+  </head>
+  <body>
+    <div class="app-shell">
+      <!-- Sidebar -->
+      <aside class="sidebar" id="sidebar">
+        <div class="sidebar-header">
+          <a class="brand" href="/" aria-label="sys32.ai home">
+            <div class="brand-badge">✦</div>
+            <span class="brand-title">sys32.ai</span>
+          </a>
+          <button
+            class="icon-btn mobile-only"
+            type="button"
+            data-sidebar-close
+            aria-label="Close sidebar"
+          >
+            ✕
+          </button>
+        </div>
+
+        <button class="new-chat-btn new-chat" type="button" id="new-chat-btn">
+          <svg
+            width="16"
+            height="16"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="2.2"
+            stroke-linecap="round"
+          >
+            <line x1="12" y1="5" x2="12" y2="19"></line>
+            <line x1="5" y1="12" x2="19" y2="12"></line>
+          </svg>
+          <span>New session</span>
+          <kbd>Ctrl K</kbd>
+        </button>
+
+        <div class="search-box">
+          <svg
+            width="15"
+            height="15"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="2"
+            stroke-linecap="round"
+          >
+            <circle cx="11" cy="11" r="8"></circle>
+            <line x1="21" y1="21" x2="16.65" y2="16.65"></line>
+          </svg>
+          <input
+            type="search"
+            id="conversation-search"
+            placeholder="Filter chats..."
+            aria-label="Search chats"
+          />
+        </div>
+
+        <nav
+          class="conversation-list"
+          id="conversation-list"
+          aria-label="Conversations"
+        ></nav>
+
+        <div class="sidebar-footer">
+          <div class="token-meter">
+            <div class="meter-labels">
+              <span>Daily Quota</span>
+              <span id="quota-display">Checking...</span>
+            </div>
+            <div class="meter-track">
+              <div class="meter-bar" id="quota-bar" style="width: 0%"></div>
+            </div>
+          </div>
+          <div class="system-status">
+            <span class="status-dot"></span>
+            <span id="system-model-name">Qwen 3.6</span>
+            <span class="muted-dot">·</span>
+            <span class="status-pill">Active</span>
+          </div>
+          <div class="account-panel">
+            <div class="account-info">
+              <div class="account-avatar" id="account-avatar">U</div>
+              <div class="account-details">
+                <strong id="account-username">User</strong>
+                <span id="account-email">Signed in</span>
+              </div>
+            </div>
+            <button class="account-action" id="change-password-btn" type="button">
+              Change password
+            </button>
+            <button class="signout-btn" id="logout-btn" type="button">
+              Sign out
+            </button>
+          </div>
+        </div>
+      </aside>
+
+      <div class="sidebar-backdrop" data-sidebar-close></div>
+
+      <!-- Main Workspace -->
+      <main class="main-panel">
+        <header class="chat-header">
+          <button
+            class="icon-btn mobile-menu mobile-only"
+            type="button"
+            data-sidebar-open
+            aria-label="Open sidebar"
+          >
+            <svg
+              width="20"
+              height="20"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="2"
+            >
+              <line x1="3" y1="12" x2="21" y2="12"></line>
+              <line x1="3" y1="6" x2="21" y2="6"></line>
+              <line x1="3" y1="18" x2="21" y2="18"></line>
+            </svg>
+          </button>
+
+          <div class="header-center">
+            <div class="model-pill">
+              <div class="model-spark">✦</div>
+              <span class="model-name">Qwen 3.6</span>
+              <span class="divider">/</span>
+              <button
+                class="mode-toggle-btn"
+                id="mode-toggle"
+                type="button"
+                title="Click to switch thinking mode"
+              >
+                <span class="status-dot green"></span>
+                <span id="mode-text">Fast</span>
+              </button>
+            </div>
+          </div>
+
+          <div class="header-actions">
+            <button
+              class="icon-btn"
+              id="clear-view-btn"
+              type="button"
+              title="Clear Screen"
+              aria-label="Clear Screen"
+            >
+              <svg
+                width="18"
+                height="18"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="2"
+              >
+                <polyline points="3 6 5 6 21 6"></polyline>
+                <path
+                  d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"
+                ></path>
+              </svg>
+            </button>
+          </div>
+        </header>
+
+        <section class="chat-layout">
+          <div class="messages" id="messages" aria-live="polite">
+            <section class="empty-state" id="empty-state">
+              <div class="empty-badge">✦</div>
+              <h1>sys32.ai</h1>
+              <p>Select a prompt starter or dispatch custom instructions.</p>
+
+              <div class="prompt-grid">
+                <button
+                  type="button"
+                  data-prompt="Explain containerization and Docker in simple terms"
+                >
+                  <span class="prompt-title">Explain Docker architecture</span>
+                  <span class="prompt-sub"
+                    >Clear breakdown with containers vs VMs</span
+                  >
+                  <span class="arrow-icon">→</span>
+                </button>
+                <button
+                  type="button"
+                  data-prompt="Help me debug a Go concurrency race condition with goroutines and channels"
+                >
+                  <span class="prompt-title">Debug Go concurrency</span>
+                  <span class="prompt-sub"
+                    >Inspect goroutine channels & mutexes</span
+                  >
+                  <span class="arrow-icon">→</span>
+                </button>
+                <button
+                  type="button"
+                  data-prompt="Give me essential Linux commands for tracking memory leaks and CPU spikes"
+                >
+                  <span class="prompt-title"
+                    >Linux diagnostics cheat sheet</span
+                  >
+                  <span class="prompt-sub"
+                    >Memory leaks, htop, and iotop queries</span
+                  >
+                  <span class="arrow-icon">→</span>
+                </button>
+                <button
+                  type="button"
+                  data-prompt="Explain the difference between Fine-Tuning and RAG architectures"
+                >
+                  <span class="prompt-title">Fine-Tuning vs RAG</span>
+                  <span class="prompt-sub"
+                    >Trade-offs, vector search, and latency</span
+                  >
+                  <span class="arrow-icon">→</span>
+                </button>
+              </div>
+            </section>
+          </div>
+
+          <!-- Float Composer Area -->
+          <div class="composer-container">
+            <form
+              class="composer"
+              id="composer"
+              method="post"
+              action="/api/chat/stream"
+              autocomplete="off"
+              novalidate
+            >
+              <textarea
+                id="composer-input"
+                name="message"
+                rows="1"
+                maxlength="8000"
+                placeholder="Ask anything or request code..."
+                autocomplete="off"
+                aria-label="Message"
+              ></textarea>
+
+              <div class="composer-toolbar">
+                <div class="toolbar-left">
+                  <div class="indicator-tag">
+                    <span class="status-dot green"></span>
+                    <span id="composer-mode-label">fast-engine</span>
+                  </div>
+                </div>
+                <div class="toolbar-right">
+                  <span class="char-count" id="char-count">0 / 8000</span>
+                  <button
+                    class="send-btn"
+                    id="send-button"
+                    type="submit"
+                    aria-label="Send message"
+                    title="Send (Enter)"
+                  >
+                    <svg
+                      class="send-icon"
+                      width="16"
+                      height="16"
+                      viewBox="0 0 24 24"
+                      fill="none"
+                      stroke="currentColor"
+                      stroke-width="2.5"
+                      stroke-linecap="round"
+                      stroke-linejoin="round"
+                    >
+                      <line x1="12" y1="19" x2="12" y2="5"></line>
+                      <polyline points="5 12 12 5 19 12"></polyline>
+                    </svg>
+                    <span class="stop-icon">■</span>
+                  </button>
+                </div>
+              </div>
+            </form>
+            <div class="composer-footer-note">
+              Press <strong>Enter</strong> to dispatch ·
+              <strong>Shift + Enter</strong> for multi-line break
+            </div>
+          </div>
+        </section>
+      </main>
+    </div>
+    <div class="modal hidden" id="password-modal" role="dialog" aria-modal="true" aria-labelledby="password-modal-title">
+      <div class="modal-card">
+        <div class="modal-header">
+          <div>
+            <h2 id="password-modal-title">Change password</h2>
+            <p>Update your Sys32.AI account password.</p>
+          </div>
+          <button class="icon-btn" id="password-modal-close" type="button" aria-label="Close">✕</button>
+        </div>
+        <form id="password-form" autocomplete="off">
+          <label>
+            Current password
+            <input id="current-password" type="password" autocomplete="current-password" required>
+          </label>
+          <label>
+            New password
+            <input id="new-password" type="password" minlength="12" maxlength="128" autocomplete="new-password" required>
+          </label>
+          <label>
+            Confirm new password
+            <input id="confirm-password" type="password" minlength="12" maxlength="128" autocomplete="new-password" required>
+          </label>
+          <p class="password-error hidden" id="password-error" role="alert"></p>
+          <div class="modal-actions">
+            <button type="button" class="modal-cancel" id="password-cancel">Cancel</button>
+            <button type="submit" class="modal-submit" id="password-submit">Change password</button>
+          </div>
+        </form>
+      </div>
+    </div>
+    <script src="/static/app.js?v=stage7-5" defer></script>
+  </body>
+</html>
