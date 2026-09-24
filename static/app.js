@@ -44,6 +44,7 @@
     const search = document.getElementById("conversation-search");
     const sendButton = document.getElementById("send-button");
     const modeToggle = document.getElementById("mode-toggle");
+    const modelSelect = document.getElementById("model-select");
     const modeText = document.getElementById("mode-text");
     const composerMode = document.getElementById("composer-mode-label");
     const quotaDisplay = document.getElementById("quota-display");
@@ -58,6 +59,8 @@
     let csrfToken = "";
     let currentConversationId = null;
     let currentMode = "fast";
+    let currentModel = "qwen/qwen3.8-27b";
+    let availableModels = [];
     let controller = null;
     let generating = false;
     let conversations = [];
@@ -77,6 +80,37 @@
       const response = await fetch(url, opts);
       if (response.status === 401) redirectToLogin();
       return response;
+    };
+
+    const getModelLabel = (id) => {
+      const found = availableModels.find((model) => model.id === id);
+      if (found?.display_name) return found.display_name;
+      const value = String(id || "AI");
+      return value.replace(/^qwen\//i, "Qwen ").replace(/^openai\//i, "");
+    };
+
+    const updateModelUI = (modelId, lock = Boolean(currentConversationId)) => {
+      currentModel = modelId || currentModel;
+      if (modelSelect && currentModel) modelSelect.value = currentModel;
+      if (modelSelect) modelSelect.disabled = lock;
+      const label = getModelLabel(currentModel);
+      const systemModel = document.getElementById("system-model-name");
+      if (systemModel) systemModel.textContent = label;
+    };
+
+    const loadModels = async () => {
+      const response = await authFetch("/api/models", { cache: "no-store" });
+      if (!response.ok) return;
+      const data = await response.json();
+      availableModels = Array.isArray(data.models) ? data.models.filter((model) => model.enabled !== false) : [];
+      if (!availableModels.length) return;
+      if (!availableModels.some((model) => model.id === currentModel)) {
+        currentModel = availableModels[0].id;
+      }
+      if (modelSelect) {
+        modelSelect.innerHTML = availableModels.map((model) => `<option value="${escapeHTML(model.id)}">${escapeHTML(model.display_name || model.id)}</option>`).join("");
+      }
+      updateModelUI(currentModel, Boolean(currentConversationId));
     };
 
     const setAccount = (user) => {
@@ -123,7 +157,7 @@
       emptyState?.classList.add("hidden");
       const article = document.createElement("article");
       article.className = "message assistant-message";
-      article.innerHTML = `<div class="message-avatar">✦</div><div class="message-body"><div class="message-meta"><strong>Sys32.AI</strong><span class="stream-meta">Qwen 3.6 · Groq</span></div><div class="message-content stream-content"></div><div class="message-actions"><button type="button" class="action-link copy-message">Copy</button></div></div>`;
+      article.innerHTML = `<div class="message-avatar">✦</div><div class="message-body"><div class="message-meta"><strong>Sys32.AI</strong><span class="stream-meta">${escapeHTML(getModelLabel(currentModel))} · Groq</span></div><div class="message-content stream-content"></div><div class="message-actions"><button type="button" class="action-link copy-message">Copy</button></div></div>`;
       messages.appendChild(article);
       return { root: article, content: article.querySelector(".stream-content"), raw: "" };
     };
@@ -192,8 +226,6 @@
       const remaining = Number(data.remaining_tokens ?? Math.max(0, limit - used));
       if (quotaDisplay) quotaDisplay.textContent = `${remaining.toLocaleString()} left`;
       if (quotaBar) quotaBar.style.width = `${Math.min(100, (used / Math.max(limit, 1)) * 100)}%`;
-      const model = document.getElementById("system-model-name");
-      if (model) model.textContent = String(data.model || "Qwen 3.6").replace(/^qwen\/qwen/i, "Qwen");
     };
 
     const loadConversation = async (id) => {
@@ -203,6 +235,7 @@
       if (!response.ok) return;
       const data = await response.json();
       currentConversationId = data.conversation.id;
+      updateModelUI(data.conversation.model || currentModel, true);
       messages.innerHTML = "";
       if (!data.messages?.length) {
         emptyState?.classList.remove("hidden");
@@ -225,7 +258,7 @@
             const meta = assistant.root.querySelector(".stream-meta");
             if (meta) {
               const label = status === "completed" ? "" : ` · ${status}`;
-              meta.textContent = `${msg.model || "Qwen 3.6"} · ${msg.provider || "AI"}${label}`;
+              meta.textContent = `${msg.model || "Qwen 3.8 27B"} · ${msg.provider || "AI"}${label}`;
             }
             if (status === "failed" || status === "cancelled") {
               assistant.content.classList.add("error-text");
@@ -242,7 +275,7 @@
       const response = await authFetch("/api/conversations", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ title: "New chat" })
+        body: JSON.stringify({ title: "New chat", model: currentModel })
       });
       if (!response.ok) throw new Error(response.status === 401 ? "Session expired. Please sign in again." : "Could not create conversation.");
       return response.json();
@@ -283,6 +316,7 @@
         if (!currentConversationId) {
           const conversation = await createConversation();
           currentConversationId = conversation.id;
+          updateModelUI(conversation.model || currentModel, true);
         }
         appendUserMessage(message);
         textarea.value = "";
@@ -334,14 +368,14 @@
               const meta = assistant.root.querySelector(".stream-meta");
               if (meta) {
                 const status = statusValue !== "completed" ? ` · ${statusValue}` : "";
-                meta.textContent = `${payload.model || "Qwen 3.6"} · ${payload.provider || "AI"}${status}`;
+                meta.textContent = `${payload.model || "Qwen 3.8 27B"} · ${payload.provider || "AI"}${status}`;
               }
             } else if (payload.type === "error") {
               if (!assistant.raw) assistant.raw = payload.message || "Generation failed.";
               setAssistantContent(assistant, assistant.raw, false);
               assistant.content.classList.add("error-text");
               const meta = assistant.root.querySelector(".stream-meta");
-              if (meta) meta.textContent = "Qwen 3.6 · generation failed";
+              if (meta) meta.textContent = `${getModelLabel(currentModel)} · generation failed`;
             }
           }
         }
@@ -364,11 +398,23 @@
     const startNewChat = () => {
       if (generating) return;
       currentConversationId = null;
+      updateModelUI(currentModel, false);
       clearMessages();
       closeSidebar();
       textarea.focus();
       renderConversationList(conversations);
     };
+
+    modelSelect?.addEventListener("change", () => {
+      if (currentConversationId) {
+        updateModelUI(currentModel, true);
+        return;
+      }
+      const selected = modelSelect.value;
+      if (availableModels.some((model) => model.id === selected)) {
+        updateModelUI(selected, false);
+      }
+    });
 
     modeToggle?.addEventListener("click", () => {
       currentMode = currentMode === "fast" ? "think" : "fast";
@@ -382,7 +428,7 @@
     textarea.addEventListener("keydown", (e) => {
       if (e.key === "Enter" && !e.shiftKey) {
         e.preventDefault();
-        send();
+        form.requestSubmit();
       }
     });
     form.addEventListener("submit", (e) => { e.preventDefault(); send(); });
@@ -500,7 +546,7 @@
       const data = await response.json();
       csrfToken = data.csrf_token || "";
       setAccount(data.user);
-      await Promise.all([loadConversations(), loadUsage()]);
+      await Promise.all([loadModels(), loadConversations(), loadUsage()]);
       resize();
       updateCount();
     };

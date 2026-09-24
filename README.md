@@ -1,36 +1,19 @@
-# Sys32.AI — Stage 7C
+# Sys32.AI — Stage 8A Multi-Model Support
 
-> **Live Website:** https://sys32-ai.duckdns.org
->
-> **Try the live application and share your feedback.** Bug reports, UI feedback, performance observations, and suggestions are welcome.
+Stage 8A adds model selection per conversation while keeping the existing Stage 7C reliability and security behavior.
 
-Stage 7C builds on Stage 7B with persistent assistant-message lifecycle state and recovery after browser refresh, network interruption, or an unexpected server restart.
+Included:
+- Model registry for Qwen 3.8 27B and GPT-OSS 20B.
+- Conversation-level model persistence in SQLite.
+- Model-aware provider resolution for chat and streaming.
+- Authenticated `GET /api/models` discovery endpoint.
+- Model selector in the chat header.
+- New conversations are created with the selected model.
+- Existing conversations lock to their stored model.
+- Assistant messages display the actual model used.
+- Existing auth, CSRF, quota, rate limiting, stop/cancel, and message lifecycle behavior remain in place.
 
-## Included
-
-- Persists an assistant message as `pending` before streaming begins.
-- Updates that same assistant row to `completed`, `cancelled`, or `failed` instead of inserting duplicate assistant rows.
-- Preserves partial streamed output when a generation is cancelled or fails.
-- Reconciles stale pending assistant messages older than two minutes into a visible failed state when conversation history is opened.
-- Loads message status into the UI so interrupted/failed generations survive refresh instead of disappearing.
-- Keeps Stage 7B per-conversation generation locking and all earlier authentication, user isolation, quota, CSRF, and password-management behavior.
-
-## Live Demo & Feedback
-
-The current deployed version is available here:
-
-**https://sys32-ai.duckdns.org**
-
-Please try the application and share feedback about:
-
-- Chat responsiveness and streaming behavior
-- Stop/cancellation behavior
-- Login, registration, and session handling
-- Conversation persistence and recovery
-- UI/UX issues
-- Errors or unexpected behavior
-
-## Local test
+Local test:
 
 ```bash
 export AI_PROVIDER=mock
@@ -42,4 +25,4 @@ go test ./...
 go run .
 ```
 
-Use the mock provider during local development so no external AI quota is consumed.
+The Go model registry and `/api/models` handler are consolidated into `main.go`; no separate `models.go` file is required.

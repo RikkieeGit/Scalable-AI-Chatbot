@@ -414,6 +414,7 @@ type Conversation struct {
 	ID        int64     `json:"id"`
 	UserID    int64     `json:"user_id"`
 	Title     string    `json:"title"`
+	Model     string    `json:"model"`
 	CreatedAt time.Time `json:"created_at"`
 	UpdatedAt time.Time `json:"updated_at"`
 }
@@ -453,7 +454,15 @@ func (s *Store) migrate() error {
 CREATE TABLE IF NOT EXISTS users (id INTEGER PRIMARY KEY AUTOINCREMENT, username TEXT NOT NULL UNIQUE, email TEXT NOT NULL UNIQUE, password_hash TEXT NOT NULL, created_at TEXT NOT NULL);
 CREATE TABLE IF NOT EXISTS sessions (id_hash TEXT PRIMARY KEY, user_id INTEGER NOT NULL, csrf_token TEXT NOT NULL, expires_at TEXT NOT NULL, created_at TEXT NOT NULL, last_seen_at TEXT NOT NULL, FOREIGN KEY(user_id) REFERENCES users(id) ON DELETE CASCADE);
 CREATE INDEX IF NOT EXISTS idx_sessions_user ON sessions(user_id); CREATE INDEX IF NOT EXISTS idx_sessions_expiry ON sessions(expires_at);
-CREATE TABLE IF NOT EXISTS conversations (id INTEGER PRIMARY KEY AUTOINCREMENT, user_id INTEGER, title TEXT NOT NULL, created_at TEXT NOT NULL, updated_at TEXT NOT NULL, FOREIGN KEY(user_id) REFERENCES users(id) ON DELETE CASCADE);
+CREATE TABLE IF NOT EXISTS conversations (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id INTEGER,
+    title TEXT NOT NULL,
+    model TEXT NOT NULL DEFAULT 'openai/gpt-oss-20b',
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    FOREIGN KEY(user_id) REFERENCES users(id) ON DELETE CASCADE
+);
 CREATE TABLE IF NOT EXISTS messages (id INTEGER PRIMARY KEY AUTOINCREMENT, conversation_id INTEGER NOT NULL, role TEXT NOT NULL CHECK(role IN ('user','assistant','system')), content TEXT NOT NULL, provider TEXT NOT NULL DEFAULT '', model TEXT NOT NULL DEFAULT '', total_tokens INTEGER NOT NULL DEFAULT 0, status TEXT NOT NULL DEFAULT 'completed' CHECK(status IN ('pending','completed','cancelled','failed')), created_at TEXT NOT NULL, FOREIGN KEY(conversation_id) REFERENCES conversations(id) ON DELETE CASCADE);
 CREATE TABLE IF NOT EXISTS ai_usage (day TEXT PRIMARY KEY, used_tokens INTEGER NOT NULL DEFAULT 0);`)
 	if err != nil {
@@ -461,6 +470,10 @@ CREATE TABLE IF NOT EXISTS ai_usage (day TEXT PRIMARY KEY, used_tokens INTEGER N
 	}
 	// Stage 3/4 compatibility: add fields to old databases when possible.
 	if _, e := s.db.Exec(`ALTER TABLE conversations ADD COLUMN user_id INTEGER`); e != nil && !strings.Contains(strings.ToLower(e.Error()), "duplicate column") {
+		return e
+	}
+	if _, e := s.db.Exec(`ALTER TABLE conversations ADD COLUMN model TEXT NOT NULL DEFAULT 'openai/gpt-oss-20b'`); e != nil &&
+		!strings.Contains(strings.ToLower(e.Error()), "duplicate column") {
 		return e
 	}
 	if _, e := s.db.Exec(`ALTER TABLE messages ADD COLUMN status TEXT NOT NULL DEFAULT 'completed'`); e != nil && !strings.Contains(strings.ToLower(e.Error()), "duplicate column") {
@@ -543,12 +556,18 @@ func (s *Store) UpdatePassword(userID int64, passwordHash string) error {
 func (s *Store) CleanupSessions() {
 	_, _ = s.db.Exec(`DELETE FROM sessions WHERE expires_at < ?`, time.Now().UTC().Format(time.RFC3339Nano))
 }
-func (s *Store) CreateConversation(userID int64, title string) (Conversation, error) {
+func (s *Store) CreateConversation(userID int64, title, model string) (Conversation, error) {
 	now := time.Now().UTC().Format(time.RFC3339Nano)
 	if strings.TrimSpace(title) == "" {
 		title = "New chat"
 	}
-	res, err := s.db.Exec(`INSERT INTO conversations(user_id,title,created_at,updated_at) VALUES(?,?,?,?)`, userID, title, now, now)
+	if strings.TrimSpace(model) == "" {
+		model = defaultModel
+	}
+	res, err := s.db.Exec(
+		`INSERT INTO conversations(user_id,title,model,created_at,updated_at) VALUES(?,?,?,?,?)`,
+		userID, title, model, now, now,
+	)
 	if err != nil {
 		return Conversation{}, err
 	}
@@ -556,36 +575,79 @@ func (s *Store) CreateConversation(userID int64, title string) (Conversation, er
 	if err != nil {
 		return Conversation{}, err
 	}
-	return Conversation{ID: id, UserID: userID, Title: title, CreatedAt: parseDBTime(now), UpdatedAt: parseDBTime(now)}, nil
+	return Conversation{
+		ID:        id,
+		UserID:    userID,
+		Title:     title,
+		Model:     model,
+		CreatedAt: parseDBTime(now),
+		UpdatedAt: parseDBTime(now),
+	}, nil
 }
 func (s *Store) GetConversation(userID, id int64) (Conversation, error) {
 	var c Conversation
 	var cr, up string
-	err := s.db.QueryRow(`SELECT id,user_id,title,created_at,updated_at FROM conversations WHERE id=? AND user_id=?`, id, userID).Scan(&c.ID, &c.UserID, &c.Title, &cr, &up)
+
+	err := s.db.QueryRow(
+		`SELECT id,user_id,title,model,created_at,updated_at
+		 FROM conversations
+		 WHERE id=? AND user_id=?`,
+		id, userID,
+	).Scan(
+		&c.ID,
+		&c.UserID,
+		&c.Title,
+		&c.Model,
+		&cr,
+		&up,
+	)
+
 	if err != nil {
 		return Conversation{}, err
 	}
+
 	c.CreatedAt = parseDBTime(cr)
 	c.UpdatedAt = parseDBTime(up)
+
 	return c, nil
 }
+
 func (s *Store) ListConversations(userID int64) ([]Conversation, error) {
-	rows, err := s.db.Query(`SELECT id,user_id,title,created_at,updated_at FROM conversations WHERE user_id=? ORDER BY datetime(updated_at) DESC,id DESC`, userID)
+	rows, err := s.db.Query(
+		`SELECT id,user_id,title,model,created_at,updated_at
+		 FROM conversations
+		 WHERE user_id=?
+		 ORDER BY datetime(updated_at) DESC,id DESC`,
+		userID,
+	)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
+
 	out := make([]Conversation, 0)
+
 	for rows.Next() {
 		var c Conversation
 		var cr, up string
-		if err := rows.Scan(&c.ID, &c.UserID, &c.Title, &cr, &up); err != nil {
+
+		if err := rows.Scan(
+			&c.ID,
+			&c.UserID,
+			&c.Title,
+			&c.Model,
+			&cr,
+			&up,
+		); err != nil {
 			return nil, err
 		}
+
 		c.CreatedAt = parseDBTime(cr)
 		c.UpdatedAt = parseDBTime(up)
+
 		out = append(out, c)
 	}
+
 	return out, rows.Err()
 }
 func (s *Store) DeleteConversation(userID, id int64) error {
@@ -975,14 +1037,75 @@ func getRequestID(r *http.Request) string {
 	return requestID(r)
 }
 
+type ModelDefinition struct {
+	ID             string `json:"id"`
+	DisplayName    string `json:"display_name"`
+	Provider       string `json:"provider"`
+	FastReasoning  string `json:"fast_reasoning"`
+	ThinkReasoning string `json:"think_reasoning"`
+	Enabled        bool   `json:"enabled"`
+}
+
+var modelRegistry = map[string]ModelDefinition{
+	"qwen/qwen3.8-27b": {
+		ID:             "qwen/qwen3.8-27b",
+		DisplayName:    "Qwen 3.8 27B",
+		Provider:       "groq",
+		FastReasoning:  "none",
+		ThinkReasoning: "default",
+		Enabled:        true,
+	},
+	"openai/gpt-oss-20b": {
+		ID:             "openai/gpt-oss-20b",
+		DisplayName:    "GPT-OSS 20B",
+		Provider:       "groq",
+		FastReasoning:  "low",
+		ThinkReasoning: "high",
+		Enabled:        true,
+	},
+}
+
+func GetModelDefinition(id string) (ModelDefinition, bool) {
+	model, ok := modelRegistry[id]
+	if !ok || !model.Enabled {
+		return ModelDefinition{}, false
+	}
+	return model, true
+}
+
+func ListEnabledModels() []ModelDefinition {
+	models := make([]ModelDefinition, 0, len(modelRegistry))
+	for _, model := range modelRegistry {
+		if model.Enabled {
+			models = append(models, model)
+		}
+	}
+	return models
+}
+
 func main() {
 	cfg, err := loadConfig()
 	if err != nil {
 		log.Fatal(err)
 	}
-	provider, err := buildProvider(cfg.ProviderName, cfg.Model, cfg.MaxOutputTokens)
-	if err != nil {
-		log.Fatal(err)
+	providers := make(map[string]AIProvider)
+	for modelID, definition := range modelRegistry {
+		if !definition.Enabled {
+			continue
+		}
+		providerName := cfg.ProviderName
+		if providerName != "mock" && definition.Provider != providerName {
+			continue
+		}
+		modelProvider, providerErr := buildProvider(providerName, modelID, cfg.MaxOutputTokens)
+		if providerErr != nil {
+			log.Fatalf("model %s: %v", modelID, providerErr)
+		}
+		providers[modelID] = modelProvider
+	}
+	defaultProvider, ok := providers[cfg.Model]
+	if !ok {
+		log.Fatalf("configured model %q is not available in model registry", cfg.Model)
 	}
 	store, err := OpenStore(cfg.DatabasePath)
 	if err != nil {
@@ -1006,15 +1129,16 @@ func main() {
 	mux.Handle("/", protected)
 	mux.Handle("/api/conversations", requireAuth(store, conversationsHandler(store, cfg.CookieSecure)))
 	mux.Handle("/api/conversations/", requireAuth(store, conversationHandler(store, cfg.CookieSecure)))
-	mux.Handle("/api/chat", requireAuth(store, chatHandler(provider, store, limiter, aiSlots, budget, runGuard)))
-	mux.Handle("/api/chat/stream", requireAuth(store, streamHandler(provider, store, limiter, aiSlots, budget, cfg.MaxOutputTokens, runGuard)))
+	mux.Handle("/api/models", requireAuth(store, http.HandlerFunc(modelsHandler)))
+	mux.Handle("/api/chat", requireAuth(store, chatHandler(providers, store, limiter, aiSlots, budget, runGuard)))
+	mux.Handle("/api/chat/stream", requireAuth(store, streamHandler(providers, store, limiter, aiSlots, budget, cfg.MaxOutputTokens, runGuard)))
 	mux.Handle("/api/chat/stop", requireAuth(store, stopHandler(store, runGuard)))
-	mux.Handle("/api/usage", requireAuth(store, usageHandler(provider, budget)))
+	mux.Handle("/api/usage", requireAuth(store, usageHandler(defaultProvider, budget)))
 	handler := securityHeaders(requestLogger(mux))
 	server := &http.Server{Addr: cfg.Addr, Handler: handler, ReadHeaderTimeout: 5 * time.Second, ReadTimeout: 15 * time.Second, WriteTimeout: 95 * time.Second, IdleTimeout: 60 * time.Second, MaxHeaderBytes: 16 * 1024}
 	go func() {
 		log.Printf("Sys32.AI Stage 5 running at http://%s", server.Addr)
-		log.Printf("provider=%s model=%s database=%s daily_token_limit=%d max_output=%d rate_limit=%d concurrent_ai=%d", provider.Name(), provider.Model(), cfg.DatabasePath, cfg.DailyTokenLimit, cfg.MaxOutputTokens, cfg.RateLimit, maxConcurrentAI)
+		log.Printf("provider=%s model=%s database=%s daily_token_limit=%d max_output=%d rate_limit=%d concurrent_ai=%d models=%d", defaultProvider.Name(), cfg.Model, cfg.DatabasePath, cfg.DailyTokenLimit, cfg.MaxOutputTokens, cfg.RateLimit, maxConcurrentAI, len(providers))
 		serverErr := server.ListenAndServe()
 		if serverErr != nil && !errors.Is(serverErr, http.ErrServerClosed) {
 			log.Printf("server error: %v", serverErr)
@@ -1035,7 +1159,7 @@ func main() {
 func buildProvider(name, model string, maxOutput int) (AIProvider, error) {
 	switch name {
 	case "mock":
-		return &MockClient{model: "mock"}, nil
+		return &MockClient{model: model}, nil
 	case "groq":
 		apiKey := os.Getenv("GROQ_API_KEY")
 		if apiKey == "" {
@@ -1316,6 +1440,14 @@ func issueSession(w http.ResponseWriter, store *Store, userID int64, secure bool
 	return nil
 }
 
+func modelsHandler(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		writeJSONError(w, http.StatusMethodNotAllowed, "method not allowed")
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"models": ListEnabledModels()})
+}
+
 func conversationsHandler(store *Store, secure bool) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		sess := sessionFromContext(r)
@@ -1335,11 +1467,25 @@ func conversationsHandler(store *Store, secure bool) http.HandlerFunc {
 			}
 			var input struct {
 				Title string `json:"title"`
+				Model string `json:"model"`
 			}
 			if r.Body != nil {
 				_ = json.NewDecoder(http.MaxBytesReader(w, r.Body, 4*1024)).Decode(&input)
 			}
-			c, err := store.CreateConversation(sess.UserID, input.Title)
+
+			model := strings.TrimSpace(input.Model)
+
+			if model == "" {
+				model = defaultModel
+			}
+
+			if _, ok := GetModelDefinition(model); !ok {
+				writeJSONError(w, http.StatusBadRequest, "unsupported model")
+				return
+			}
+
+			c, err := store.CreateConversation(sess.UserID, input.Title, model)
+
 			if err != nil {
 				writeJSONError(w, 500, "could not create conversation")
 				return
@@ -1391,7 +1537,23 @@ func conversationHandler(store *Store, secure bool) http.HandlerFunc {
 	}
 }
 
-func chatHandler(provider AIProvider, store *Store, limiter *RateLimiter, slots chan struct{}, budget TokenBudget, runGuard *ConversationRunGuard) http.HandlerFunc {
+func providerForConversation(providers map[string]AIProvider, conversation Conversation) (AIProvider, error) {
+	model := strings.TrimSpace(conversation.Model)
+	if model == "" {
+		model = defaultModel
+	}
+	definition, ok := GetModelDefinition(model)
+	if !ok {
+		return nil, fmt.Errorf("unsupported conversation model %q", model)
+	}
+	provider, ok := providers[definition.ID]
+	if !ok {
+		return nil, fmt.Errorf("provider for model %q is unavailable", model)
+	}
+	return provider, nil
+}
+
+func chatHandler(providers map[string]AIProvider, store *Store, limiter *RateLimiter, slots chan struct{}, budget TokenBudget, runGuard *ConversationRunGuard) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		sess := sessionFromContext(r)
 		if !verifyCSRF(r, sess) {
@@ -1414,6 +1576,16 @@ func chatHandler(provider AIProvider, store *Store, limiter *RateLimiter, slots 
 		req, convID, err := parseChatAndConversation(w, r, store, sess.UserID)
 		if err != nil {
 			writeJSONError(w, 400, err.Error())
+			return
+		}
+		conversation, err := store.GetConversation(sess.UserID, convID)
+		if err != nil {
+			writeJSONError(w, 500, "could not load conversation")
+			return
+		}
+		provider, err := providerForConversation(providers, conversation)
+		if err != nil {
+			writeJSONError(w, http.StatusBadRequest, err.Error())
 			return
 		}
 		if !runGuard.TryAcquire(sess.UserID, convID) {
@@ -1490,7 +1662,7 @@ func stopHandler(store *Store, runGuard *ConversationRunGuard) http.HandlerFunc 
 	}
 }
 
-func streamHandler(provider AIProvider, store *Store, limiter *RateLimiter, slots chan struct{}, budget TokenBudget, maxOutput int, runGuard *ConversationRunGuard) http.HandlerFunc {
+func streamHandler(providers map[string]AIProvider, store *Store, limiter *RateLimiter, slots chan struct{}, budget TokenBudget, maxOutput int, runGuard *ConversationRunGuard) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		sess := sessionFromContext(r)
 		if !verifyCSRF(r, sess) {
@@ -1513,6 +1685,16 @@ func streamHandler(provider AIProvider, store *Store, limiter *RateLimiter, slot
 		req, convID, err := parseChatAndConversation(w, r, store, sess.UserID)
 		if err != nil {
 			writeJSONError(w, 400, err.Error())
+			return
+		}
+		conversation, err := store.GetConversation(sess.UserID, convID)
+		if err != nil {
+			writeJSONError(w, 500, "could not load conversation")
+			return
+		}
+		provider, err := providerForConversation(providers, conversation)
+		if err != nil {
+			writeJSONError(w, http.StatusBadRequest, err.Error())
 			return
 		}
 		if !runGuard.TryAcquire(sess.UserID, convID) {
@@ -1633,7 +1815,7 @@ func parseChatAndConversation(w http.ResponseWriter, r *http.Request, store *Sto
 		}
 		convID = id
 	} else {
-		c, err := store.CreateConversation(userID, "New chat")
+		c, err := store.CreateConversation(userID, "New chat", defaultModel)
 		if err != nil {
 			return ChatRequest{}, 0, errors.New("could not create conversation")
 		}

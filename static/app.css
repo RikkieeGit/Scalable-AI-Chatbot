@@ -1063,3 +1063,30 @@ button, input, textarea {
     grid-template-columns: 1fr;
   }
 }
+/* Stage 8A model selector */
+.model-select {
+  appearance: none;
+  -webkit-appearance: none;
+  border: 0;
+  outline: 0;
+  background: transparent;
+  color: var(--text-main);
+  font: inherit;
+  font-weight: 600;
+  cursor: pointer;
+  padding: 2px 18px 2px 0;
+  background-image: linear-gradient(45deg, transparent 50%, currentColor 50%), linear-gradient(135deg, currentColor 50%, transparent 50%);
+  background-position: calc(100% - 8px) 50%, calc(100% - 3px) 50%;
+  background-size: 5px 5px, 5px 5px;
+  background-repeat: no-repeat;
+}
+
+.model-select:disabled {
+  opacity: 0.95;
+  cursor: default;
+}
+
+.model-select option {
+  background: var(--card);
+  color: var(--text-main);
+}
